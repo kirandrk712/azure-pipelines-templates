@@ -1,0 +1,39 @@
+# Applies the Salt state on target minions with a dry run first,
+# then a real run, then a smoke test.
+parameters:
+  - name: sshEndpoint
+    type: string
+  - name: saltTarget
+    type: string
+  - name: batchSize
+    type: string
+  - name: version
+    type: string
+
+steps:
+  - task: SSH@0
+    displayName: Salt dry run (test=True)
+    inputs:
+      sshEndpoint: ${{ parameters.sshEndpoint }}
+      runOptions: inline
+      inline: |
+        set -euo pipefail
+        sudo salt -C '${{ parameters.saltTarget }}' state.apply app test=True pillar='{"app":{"version":"${{ parameters.version }}"}}'
+
+  - task: SSH@0
+    displayName: Salt apply
+    inputs:
+      sshEndpoint: ${{ parameters.sshEndpoint }}
+      runOptions: inline
+      inline: |
+        set -euo pipefail
+        sudo salt -b '${{ parameters.batchSize }}' -C '${{ parameters.saltTarget }}' state.apply app pillar='{"app":{"version":"${{ parameters.version }}"}}'
+
+  - task: SSH@0
+    displayName: Smoke test
+    inputs:
+      sshEndpoint: ${{ parameters.sshEndpoint }}
+      runOptions: inline
+      inline: |
+        set -euo pipefail
+        sudo salt -C '${{ parameters.saltTarget }}' cmd.run 'curl -fsS http://localhost:8080/health'

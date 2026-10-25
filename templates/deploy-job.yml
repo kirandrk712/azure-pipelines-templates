@@ -1,0 +1,39 @@
+# Reusable deployment job. Uses a `deployment` job so the target
+# Environment's approvals, checks and history apply automatically.
+parameters:
+  - name: environment
+    type: string
+  - name: saltTarget
+    type: string
+  - name: sshEndpoint
+    type: string
+  - name: batchSize
+    type: string
+    default: '100%'
+
+jobs:
+  - deployment: Deploy_${{ parameters.environment }}
+    displayName: Deploy to ${{ parameters.environment }}
+    environment: ${{ parameters.environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - download: current
+              artifact: app-package
+
+            - task: CopyFilesOverSSH@0
+              displayName: Upload package to Salt master
+              inputs:
+                sshEndpoint: ${{ parameters.sshEndpoint }}
+                sourceFolder: $(Pipeline.Workspace)/app-package
+                contents: '*.tar.gz'
+                targetFolder: /srv/salt/app/files
+                overwrite: true
+
+            - template: salt-apply.yml
+              parameters:
+                sshEndpoint: ${{ parameters.sshEndpoint }}
+                saltTarget: ${{ parameters.saltTarget }}
+                batchSize: ${{ parameters.batchSize }}
+                version: $(buildVersion)

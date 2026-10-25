@@ -1,0 +1,84 @@
+# Multi-stage pipeline: Build -> QA -> UAT -> PRD
+# Approvals/checks for UAT and PRD are configured on the Azure DevOps
+# Environments (Pipelines > Environments), not in this file.
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    exclude: ['**/*.md']
+
+pr:
+  branches:
+    include: [main]
+
+parameters:
+  - name: deployToProd
+    displayName: Deploy to production
+    type: boolean
+    default: false
+
+variables:
+  artifactName: app-package
+  buildVersion: $(Build.BuildNumber)
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  - stage: Build
+    displayName: Build & validate
+    jobs:
+      - job: BuildJob
+        steps:
+          - script: |
+              python3 -m pip install --upgrade pip
+              python3 -m pip install yamllint shellcheck-py
+              yamllint -d relaxed .
+              find . -name '*.sh' -print0 | xargs -0 -r shellcheck
+            displayName: Lint YAML and shell
+
+          - task: ArchiveFiles@2
+            displayName: Package application
+            inputs:
+              rootFolderOrFile: '$(Build.SourcesDirectory)/app'
+              includeRootFolder: false
+              archiveType: tar
+              tarCompression: gz
+              archiveFile: '$(Build.ArtifactStagingDirectory)/app-$(buildVersion).tar.gz'
+
+          - publish: $(Build.ArtifactStagingDirectory)
+            artifact: $(artifactName)
+
+  - stage: QA
+    displayName: Deploy to QA
+    dependsOn: Build
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+    jobs:
+      - template: templates/deploy-job.yml
+        parameters:
+          environment: qa
+          saltTarget: 'qa-app*'
+          sshEndpoint: salt-master-qa
+
+  - stage: UAT
+    displayName: Deploy to UAT
+    dependsOn: QA
+    jobs:
+      - template: templates/deploy-job.yml
+        parameters:
+          environment: uat
+          saltTarget: 'uat-app*'
+          sshEndpoint: salt-master-uat
+
+  - stage: PRD
+    displayName: Deploy to Production
+    dependsOn: UAT
+    condition: and(succeeded(), eq('${{ parameters.deployToProd }}', 'true'))
+    jobs:
+      - template: templates/deploy-job.yml
+        parameters:
+          environment: prd
+          saltTarget: 'prd-app*'
+          sshEndpoint: salt-master-prd
+          batchSize: '25%'
